@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Bilibili 线程撕裂者
 // @namespace    https://github.com/MrTangLuyao/Bilibili-thread-ripper
-// @version      2026.9.27.1
+// @version      2026.9.27.2
 // @description  保留哔哩哔哩原生播放器，通过多 CDN、多 Range 并发下载改善视频缓冲速度。
 // @icon         https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/icons/icon-128.png
 // @author       MrTangLuyao
 // @license      MIT
-// @homepageURL  https://github.com/MrTangLuyao/Bilibili-thread-ripper
-// @supportURL   https://github.com/MrTangLuyao/Bilibili-thread-ripper/issues
-// @updateURL    https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js
-// @downloadURL  https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js
+// @homepageURL  https://github.com/AhaiMk01/Bilibili-thread-ripper
+// @supportURL   https://github.com/AhaiMk01/Bilibili-thread-ripper/issues
+// @updateURL    https://raw.githubusercontent.com/AhaiMk01/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js
+// @downloadURL  https://raw.githubusercontent.com/AhaiMk01/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js
 // @match        https://*.bilibili.com/*
 // @run-at       document-start
 // @grant        GM_registerMenuCommand
@@ -294,6 +294,8 @@ const chrome = (() => {
       enabled: source.enabled !== false,
       // The live module on live.bilibili.com; the master switch above still rules.
       liveEnabled: source.liveEnabled !== false,
+      // Hides WebRTC and Bilibili's P2P SDKs on video pages so the player stays on HTTP.
+      videoP2pBlock: source.videoP2pBlock !== false,
       // "full" replaces Bilibili's playback core; "compat" leaves it in charge and only
       // downloads its media requests.
       takeover: source.takeover === "compat" ? "compat" : "full",
@@ -3313,7 +3315,7 @@ const chrome = (() => {
       urlDeadlineSeconds,
       video,
       getDebug: () => ({
-        version: "2026.9.27.1",
+        version: "2026.9.27.2",
         architecture: "bilibili-native-ui-progressive-mse-0.8-core",
         quality: qualityLabel(selectedVideo),
         qualityId: Number(selectedVideo?.id) || 0,
@@ -4176,6 +4178,7 @@ const chrome = (() => {
 
       <section class="notice-controls" aria-label="提示设置">
         <div class="notice-row"><label for="live-enabled">直播加速（实验性）</label><label class="switch"><input id="live-enabled" type="checkbox" aria-label="直播加速（实验性）"><span></span></label></div>
+        <div class="notice-row"><label for="video-p2p-block">视频页屏蔽 P2P（刷新后生效）</label><label class="switch"><input id="video-p2p-block" type="checkbox" aria-label="视频页屏蔽 P2P"><span></span></label></div>
         <div class="notice-row"><label for="error-notices">显示错误</label><label class="switch"><input id="error-notices" type="checkbox" aria-label="显示错误"><span></span></label></div>
         <div class="notice-row"><label for="debug-notices">Debug 模式</label><label class="switch"><input id="debug-notices" type="checkbox" aria-label="Debug 模式"><span></span></label></div>
         <div class="notice-row"><label for="floating-button">悬浮按钮</label><label class="switch"><input id="floating-button" type="checkbox" aria-label="悬浮按钮"><span></span></label></div>
@@ -4340,6 +4343,7 @@ const chrome = (() => {
     const errorNotices = $("error-notices");
     const debugNotices = $("debug-notices");
     const liveEnabled = $("live-enabled");
+    const videoP2pBlock = $("video-p2p-block");
     const floatingButton = $("floating-button");
     const debugFilters = $("debug-filters");
     const debugCategoryInputs = [...shadow.querySelectorAll("[data-debug-category]")];
@@ -4420,6 +4424,7 @@ const chrome = (() => {
       customHosts = settings.customHosts;
       renderHosts();
       liveEnabled.checked = settings.liveEnabled !== false;
+      videoP2pBlock.checked = settings.videoP2pBlock !== false;
       floatingButton.checked = settings.floatingButton !== false;
       errorNotices.checked = settings.errorNotices;
       debugNotices.checked = settings.debugNotices;
@@ -4430,6 +4435,7 @@ const chrome = (() => {
     const saveDebugCategories = () => save({ debugCategories: Object.fromEntries(debugCategoryInputs.map((input) => [input.dataset.debugCategory, input.checked])) });
     enabled.addEventListener("change", () => save({ enabled: enabled.checked }));
     liveEnabled.addEventListener("change", () => save({ liveEnabled: liveEnabled.checked }));
+    videoP2pBlock.addEventListener("change", () => save({ videoP2pBlock: videoP2pBlock.checked }));
     floatingButton.addEventListener("change", () => save({ floatingButton: floatingButton.checked }));
     concurrency.addEventListener("input", () => {
       const threads = THREAD_OPTIONS[Number(concurrency.value)];
@@ -4801,7 +4807,7 @@ const chrome = (() => {
   });
 
   const stats = {
-    version: "2026.9.27.1",
+    version: "2026.9.27.2",
     architecture: "bilibili-native-ui-progressive-mse-0.8-core",
     mode: settings.mode,
     playerState: "waiting",
@@ -5055,7 +5061,7 @@ const chrome = (() => {
     const match = /\/video\/(BV[0-9A-Za-z]+|av\d+)/i.exec(location.pathname);
     if (match) return match[1];
 
-    if (/^\/list\//i.test(location.pathname)) {
+    if (/^\/(?:list|festival)\//i.test(location.pathname)) {
       const bvid = new URLSearchParams(location.search).get("bvid") || "";
       if (/^BV[0-9A-Za-z]+$/i.test(bvid)) return bvid;
     }
@@ -5063,7 +5069,29 @@ const chrome = (() => {
     return "";
   }
 
+  // Bangumi (pgc) and course (pugv) pages are addressed by episode, not by BVID. A season
+  // link (/ss…) names no episode, so it waits until the page's own playurl request says
+  // which one it plays; the native player runs meanwhile.
+  const seasonEpisodes = new Map();
+  function episodePath() {
+    const match = /^\/(bangumi|cheese)\/play\/(ep|ss)(\d+)/i.exec(location.pathname);
+    if (!match) return null;
+    return { kind: match[1].toLowerCase() === "bangumi" ? "pgc" : "pugv", type: match[2].toLowerCase(), id: Number(match[3]) || 0 };
+  }
+
+  // undefined: not an episode page. null: an episode page whose episode is not known yet.
+  function episodeIdentity() {
+    const path = episodePath();
+    if (!path) return undefined;
+    const epId = path.type === "ep" ? path.id : seasonEpisodes.get(`${path.kind}:ss${path.id}`) || 0;
+    if (!epId) return null;
+    const key = `${path.kind}:ep${epId}`;
+    return { kind: path.kind, epId, aid: 0, bvid: "", part: 1, key, videoKey: key };
+  }
+
   function routeIdentity() {
+    const episode = episodeIdentity();
+    if (episode !== undefined) return episode;
     const pathId = urlPathId();
     if (!pathId) return null;
     const podBvid = activePodBvid();
@@ -5163,9 +5191,31 @@ const chrome = (() => {
     return null;
   }
 
+  // The ordinary video playurl, the bangumi one (web and web/v2) and the course one.
+  const PLAYURL_RE = /\/(?:x\/player\/(?:wbi\/)?playurl|pgc\/player\/web\/(?:v2\/)?playurl|pugv\/player\/web\/playurl)/i;
+  const episodeKindOf = (url) => /\/pgc\/player\//i.test(url) ? "pgc" : /\/pugv\/player\//i.test(url) ? "pugv" : "";
+
+  // Bangumi answers carry the playinfo under result (web) or result.video_info (web/v2);
+  // this brings them to the { code, data } shape of the ordinary playurl. A preview-only
+  // answer (a member episode without membership) gives null: the native player keeps it.
+  function normalizePlayinfo(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    if (payload.data?.dash) return payload;
+    const result = payload.result;
+    const info = result?.video_info || result;
+    if (!info?.dash) return null;
+    const preview = result.is_preview === 1 || info.is_preview === 1 || /PREVIEW/i.test(String(result.play_check?.play_detail || ""));
+    return preview ? null : { code: 0, message: "0", data: info };
+  }
+
   function requestedVideoKey(url) {
     try {
       const parsed = new URL(String(url), location.href);
+      const kind = episodeKindOf(parsed.pathname);
+      if (kind) {
+        const epId = Number(parsed.searchParams.get("ep_id")) || 0;
+        return epId ? `${kind}:ep${epId}` : "";
+      }
       const bvid = String(parsed.searchParams.get("bvid") || "");
       const aid = Number(parsed.searchParams.get("avid") || parsed.searchParams.get("aid")) || 0;
       return bvid ? bvid.toLowerCase() : aid ? `av${aid}` : "";
@@ -5174,13 +5224,25 @@ const chrome = (() => {
     }
   }
 
+  // An episode key already names one file, so its episode ID stands in for the CID that
+  // keeps the parts of one BVID apart.
   function requestedCid(url) {
-    try { return Number(new URL(String(url), location.href).searchParams.get("cid")) || 0; }
+    try {
+      const parsed = new URL(String(url), location.href);
+      return Number(parsed.searchParams.get(episodeKindOf(parsed.pathname) ? "ep_id" : "cid")) || 0;
+    }
     catch (_error) { return 0; }
   }
 
   function capturePlayinfoRequest(url) {
-    if (!/\/x\/player\/(?:wbi\/)?playurl/i.test(String(url))) return null;
+    if (!PLAYURL_RE.test(String(url))) return null;
+    const path = episodePath();
+    const kind = episodeKindOf(String(url));
+    if (path?.type === "ss" && path.kind === kind) {
+      const seasonKey = `${kind}:ss${path.id}`;
+      const epId = requestedCid(url);
+      if (epId && !seasonEpisodes.has(seasonKey)) seasonEpisodes.set(seasonKey, epId);
+    }
     const identity = routeIdentity();
     const videoKey = requestedVideoKey(url);
     const cid = requestedCid(url);
@@ -5188,8 +5250,9 @@ const chrome = (() => {
     return { routeKey: identity.key, videoKey, cid };
   }
 
-  function observePlayinfo(url, payload, requestContext = null) {
-    if (!/\/x\/player\/(?:wbi\/)?playurl/i.test(String(url)) || !isDashPlayinfo(payload)) return;
+  function observePlayinfo(url, rawPayload, requestContext = null) {
+    const payload = normalizePlayinfo(rawPayload);
+    if (!PLAYURL_RE.test(String(url)) || !isDashPlayinfo(payload)) return;
     const context = requestContext || capturePlayinfoRequest(url);
     const identity = routeIdentity();
     if (!context || !identity || context.routeKey !== identity.key || context.videoKey !== identity.videoKey) return;
@@ -5223,7 +5286,7 @@ const chrome = (() => {
   }
 
   function observeFetchResponse(url, response, requestContext) {
-    if (!/\/x\/player\/(?:wbi\/)?playurl/i.test(String(url))) return;
+    if (!PLAYURL_RE.test(String(url))) return;
     response.clone().json().then((payload) => observePlayinfo(url, payload, requestContext)).catch(() => {});
   }
 
@@ -5249,7 +5312,7 @@ const chrome = (() => {
     };
     xhrPrototype.send = function (...args) {
       const url = xhrUrls.get(this) || "";
-      if (/\/x\/player\/(?:wbi\/)?playurl/i.test(url)) {
+      if (PLAYURL_RE.test(url)) {
         this.addEventListener("load", () => {
           try {
             const payload = this.responseType === "json" ? this.response : JSON.parse(this.responseText);
@@ -5313,7 +5376,34 @@ const chrome = (() => {
 
   // refresh: new addresses for the video that is already playing. Its CID is known by then,
   // so the video information is not asked for again, and the takeover notices stay quiet.
+  // Bangumi needs only the episode; a course also wants its AV number and CID, which its
+  // season information lists per episode.
+  async function fetchEpisodePlayinfo(identity, signal, refresh) {
+    if (!refresh) notices?.log("正在读取剧集信息", "确认你要看的这一集。", "info", "", identity.key, "takeover");
+    let query = `ep_id=${identity.epId}`;
+    if (identity.kind === "pugv") {
+      const seasonResponse = await nativeFetch(`${BILIBILI_API_ORIGIN}/pugv/view/web/season?ep_id=${identity.epId}`, { credentials: "include", signal });
+      if (!seasonResponse.ok) throw new Error(`读取课程信息失败（HTTP ${seasonResponse.status}）`);
+      const season = await seasonResponse.json();
+      const episode = (season?.data?.episodes || []).find((item) => Number(item?.id) === identity.epId);
+      if (!episode?.aid || !episode?.cid) throw new Error(season?.message || "课程里找不到这一集");
+      query += `&avid=${Number(episode.aid)}&cid=${Number(episode.cid)}`;
+    }
+    const endpoint = identity.kind === "pgc" ? "/pgc/player/web/playurl" : "/pugv/player/web/playurl";
+    const playResponse = await nativeFetch(`${BILIBILI_API_ORIGIN}${endpoint}?${query}&qn=127&fnval=4048&fnver=0&fourk=1`, { credentials: "include", signal });
+    if (!playResponse.ok) throw new Error(`读取播放清单失败（HTTP ${playResponse.status}）`);
+    const payload = await playResponse.json();
+    const playinfo = normalizePlayinfo(payload);
+    if (Number(payload?.code) !== 0 || !isDashPlayinfo(playinfo)) throw new Error(payload?.message || "这一集没有可用的 DASH 播放清单（可能是试看或地区限制）");
+    if (signal?.aborted) throw signal.reason || new DOMException("播放清单请求已取消", "AbortError");
+    routeCids.set(identity.key, identity.epId);
+    cachePlayinfo(identity, playinfo, identity.epId);
+    if (!refresh) notices?.log("已经拿到视频下载地址", "接下来开始准备多线程下载。", "success", "", identity.key, "takeover");
+    return playinfo;
+  }
+
   async function fetchRoutePlayinfo(identity, signal, refresh = false) {
+    if (identity.kind) return fetchEpisodePlayinfo(identity, signal, refresh);
     let cid = refresh ? Number(routeCids.get(identity.key)) || 0 : 0;
     let canonicalBvid = String(identity.bvid || "");
     let canonicalAid = Number(identity.aid) || 0;
@@ -6166,7 +6256,7 @@ const chrome = (() => {
           state: stats.playerState, lastError: stats.lastError, player: rest, nodes: stats.cdnHosts.map((item) => ({ ...item })), bannedNodes: cdnBans?.hosts?.() || [], page: pageEvents.slice(), timeline
         }, null, 1);
       },
-      version: "2026.9.27.1"
+      version: "2026.9.27.2"
     })
   });
   publish();
@@ -6369,6 +6459,51 @@ const chrome = (() => {
   });
 })(globalThis);
 
+/* src/video-p2p-guard.js */
+(function installVideoP2pGuard(root) {
+  "use strict";
+  // Video pages only; the live module has its own P2P mocks.
+  if (/^live\.bilibili\.com$/i.test(root.location?.hostname || "")) return;
+
+  const CHANNEL = "__BILI_RANGE_ACCELERATOR_V1__";
+  const INSTALL_FLAG = "__biliThreadRipperVideoP2pGuardInstalled";
+  const rangeCore = root.__BILI_RANGE_CORE__;
+  if (!rangeCore || root[INSTALL_FLAG]) return;
+  Object.defineProperty(root, INSTALL_FLAG, { value: true });
+
+  let settings = rangeCore.normalizeSettings({});
+  let settingsLoaded = false;
+  // Blocked until the saved settings arrive: the player probes WebRTC once while it
+  // starts, so a guard that waited would usually miss it. A viewer who switched the
+  // guard off gets the real objects back as soon as the settings land.
+  const guardOn = () => !settingsLoaded || (settings.enabled && settings.videoP2pBlock !== false);
+
+  // Bilibili's player only uses P2P when the SDKs load and WebRTC is available; with
+  // neither it stays on the HTTP CDN path. The getters hand out the page's own objects
+  // whenever the guard is off, and the setters keep whatever the page assigns.
+  class MockPcdn { on() {} off() {} emit() {} destroy() {} }
+  const guard = (name, blocked) => {
+    let real = root[name];
+    try {
+      Object.defineProperty(root, name, {
+        configurable: true,
+        get() { return guardOn() ? blocked : real; },
+        set(value) { real = value; }
+      });
+    } catch (_error) {}
+  };
+  for (const name of ["PCDNLoader", "BPP2PSDK", "SeederSDK"]) guard(name, MockPcdn);
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel"]) {
+    if (name in root) guard(name, undefined);
+  }
+
+  root.addEventListener("message", (event) => {
+    if (event.source !== root || event.data?.channel !== CHANNEL || event.data.type !== "settings") return;
+    settings = rangeCore.normalizeSettings(event.data.payload);
+    settingsLoaded = true;
+  });
+})(globalThis);
+
 /* src/live-hook.js */
 (function installLiveHook(root) {
   "use strict";
@@ -6420,7 +6555,7 @@ const chrome = (() => {
 
   // ---- stats for the settings panel ----
   const stats = {
-    version: "2026.9.27.1",
+    version: "2026.9.27.2",
     architecture: "live-segment-ripper",
     mode: "live",
     playerState: "waiting",
@@ -6884,7 +7019,7 @@ const chrome = (() => {
         hosts: context.pool.status()
       },
       getStats: () => ({ ...stats }),
-      version: "2026.9.27.1"
+      version: "2026.9.27.2"
     })
   });
   publish();
@@ -7201,12 +7336,12 @@ const chrome = (() => {
   "use strict";
 
   const CHANNEL = "__BILI_RANGE_ACCELERATOR_V1__";
-  const VERSION = "2026.9.27.1";
+  const VERSION = "2026.9.27.2";
   const notices = globalThis.__BTR_NOTIFICATION_VIEW__;
   const ERROR_NOTICE_ID = "__bilibili_thread_ripper_error_notice__";
   const ERROR_NOTICE_STYLE_ID = "__bilibili_thread_ripper_error_notice_style__";
   const THREAD_OPTIONS = Object.freeze([4, 8, 16, 32, 64, 128]);
-  const DEFAULTS = { enabled: true, liveEnabled: true, concurrency: 8, autoConcurrency: true, takeover: "full", mode: "mainland", customHosts: [], floatingButton: true, floatingButtonLeft: null, floatingButtonTop: null, debugNotices: false, errorNotices: false, debugCategories: {} };
+  const DEFAULTS = { enabled: true, liveEnabled: true, videoP2pBlock: true, concurrency: 8, autoConcurrency: true, takeover: "full", mode: "mainland", customHosts: [], floatingButton: true, floatingButtonLeft: null, floatingButtonTop: null, debugNotices: false, errorNotices: false, debugCategories: {} };
   // Settings of the old ArtPlayer version, of the removed compatibility modes, and the flag
   // of the first-run guide that 0.9.4.2 removed.
   const RETIRED_KEYS = ["statusNotice", "compatibilityMode", "volume", "danmaku", "danmakuFontSize", "subtitleLanguage", "subtitleLastLanguage", "btrOnboardingRevision"];
@@ -7222,6 +7357,7 @@ const chrome = (() => {
     return {
       enabled: input?.enabled !== false,
       liveEnabled: input?.liveEnabled !== false,
+      videoP2pBlock: input?.videoP2pBlock !== false,
       concurrency: THREAD_OPTIONS.includes(threads) ? threads : 8,
       autoConcurrency: input?.autoConcurrency !== false,
       takeover: input?.takeover === "compat" ? "compat" : "full",
