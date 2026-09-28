@@ -41,7 +41,7 @@
 
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 插件
-2. 点这里：[**安装线程撕裂者**](https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js)
+2. 点这里：[**安装线程撕裂者**](https://raw.githubusercontent.com/AhaiMk01/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js)
 3. 打开 B 站视频，完事
 
 #### ⚠️如果是早期通过视频了解的这个插件 注意：针对Chrome的独立版插件已经停止更新。请卸载独立插件版插件并按步骤安装基于油猴脚本的新版BTR。⚠️
